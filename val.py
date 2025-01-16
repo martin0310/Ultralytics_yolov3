@@ -28,6 +28,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import traceback
 from tqdm import tqdm
 
 FILE = Path(__file__).resolve()
@@ -60,6 +61,12 @@ from utils.metrics import ConfusionMatrix, ap_per_class, box_iou
 from utils.plots import output_to_target, plot_images, plot_val_study
 from utils.torch_utils import select_device, smart_inference_mode
 
+def parse_coco_id(stem):
+    # example: "COCO_val2014_000000054959" -> 54959
+    if stem.startswith("COCO_val2014_"):
+        stem = stem.replace("COCO_val2014_", "")
+        stem = stem.lstrip("0") or "0"
+    return int(stem)
 
 def save_one_txt(predn, save_conf, shape, file):
     """
@@ -131,7 +138,23 @@ def save_one_json(predn, jdict, path, class_map):
         - Bounding boxes are converted from xyxy format to xywh format.
         - The JSON output format is compatible with COCO dataset evaluation.
     """
-    image_id = int(path.stem) if path.stem.isnumeric() else path.stem
+    # image_id = int(path.stem) if path.stem.isnumeric() else path.stem
+    
+    # Try converting COCO-style file stems like "COCO_val2014_000000054959" to int 54959
+    # Otherwise, fall back to numeric or string as originally written
+    # Safely parse the file stem into an integer if possible
+    stem = path.stem
+    if stem.startswith("COCO_val2014_"):
+        # Remove prefix "COCO_val2014_"
+        stem = stem.replace("COCO_val2014_", "")
+        # Remove leading zeros (e.g., "000000054959" -> "54959")
+        stem = stem.lstrip("0") or "0"
+        # Convert to int
+        image_id = int(stem)
+    else:
+        # Fallback: try int(stem) if numeric, else use original string
+        image_id = int(stem) if stem.isnumeric() else stem
+   
     box = xyxy2xywh(predn[:, :4])  # xywh
     box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
     for p, b in zip(predn.tolist(), box.tolist()):
@@ -306,7 +329,8 @@ def run(
     # Configure
     model.eval()
     cuda = device.type != "cpu"
-    is_coco = isinstance(data.get("val"), str) and data["val"].endswith(f"coco{os.sep}val2017.txt")  # COCO dataset
+    # is_coco = isinstance(data.get("val"), str) and data["val"].endswith(f"coco{os.sep}val2017.txt")  # COCO dataset
+    is_coco = isinstance(data.get("val"), str) and data["val"].endswith(f"coco2014{os.sep}5k.txt")
     nc = 1 if single_cls else int(data["nc"])  # number of classes
     iouv = torch.linspace(0.5, 0.95, 10, device=device)  # iou vector for mAP@0.5:0.95
     niou = iouv.numel()
@@ -451,9 +475,11 @@ def run(
     # Save JSON
     if save_json and len(jdict):
         w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ""  # weights
-        anno_json = str(Path("../datasets/coco/annotations/instances_val2017.json"))  # annotations
+        # anno_json = str(Path("../datasets/coco/annotations/instances_val2017.json"))  # annotations
+        anno_json = str(Path("/storage/share/datasets/coco-2014/coco2014_kaggle/coco2014/annotations/instances_val2014.json"))
         if not os.path.exists(anno_json):
-            anno_json = os.path.join(data["path"], "annotations", "instances_val2017.json")
+            # anno_json = os.path.join(data["path"], "annotations", "instances_val2017.json")
+            anno_json = os.path.join(data["path"], "annotations", "instances_val2014.json")
         pred_json = str(save_dir / f"{w}_predictions.json")  # predictions
         LOGGER.info(f"\nEvaluating pycocotools mAP... saving {pred_json}...")
         with open(pred_json, "w") as f:
@@ -468,13 +494,15 @@ def run(
             pred = anno.loadRes(pred_json)  # init predictions api
             eval = COCOeval(anno, pred, "bbox")
             if is_coco:
-                eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.im_files]  # image IDs to evaluate
+                # eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.im_files]  # image IDs to evaluate
+                eval.params.imgIds = [parse_coco_id(Path(x).stem) for x in dataloader.dataset.im_files]
             eval.evaluate()
             eval.accumulate()
             eval.summarize()
             map, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
         except Exception as e:
             LOGGER.info(f"pycocotools unable to run: {e}")
+            LOGGER.error("Traceback:", exc_info=True)
 
     # Return results
     model.float()  # for training
