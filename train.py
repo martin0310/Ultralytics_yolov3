@@ -100,6 +100,17 @@ WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
 GIT_INFO = check_git_info()
 
 
+def count_normal_3x3_convs(model):
+    count = 0
+    for module in model.modules():
+        if isinstance(module, nn.Conv2d):
+            # Check if kernel size is 3x3 and groups = 1 (normal convolution)
+            if module.kernel_size == (3, 3) and module.groups == 1:
+                count += 1
+    print('3_3_layer_count:')
+    print(count)
+
+
 def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     """
     Train a YOLOv3 model on a custom dataset and manage the training process.
@@ -207,7 +218,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
     nc = 1 if single_cls else int(data_dict["nc"])  # number of classes
     names = {0: "item"} if single_cls and len(data_dict["names"]) != 1 else data_dict["names"]  # class names
     # is_coco = isinstance(val_path, str) and val_path.endswith("coco/val2017.txt")  # COCO dataset
-    is_coco = isinstance(val_path, str) and val_path.endswith("coco/5k.txt")
+    is_coco = isinstance(val_path, str) and val_path.endswith("coco2014/5k.txt")
     # Model
     check_suffix(weights, ".pt")  # check weights
     pretrained = weights.endswith(".pt")
@@ -364,6 +375,9 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
         f"Logging results to {colorstr('bold', save_dir)}\n"
         f"Starting training for {epochs} epochs..."
     )
+    # print('model:')
+    # print(model)
+    count_normal_3x3_convs(model)
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         callbacks.run("on_train_epoch_start")
         model.train()
